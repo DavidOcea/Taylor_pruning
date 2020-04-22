@@ -340,9 +340,11 @@ def get_conv_sizes(args, model):
                 dummy_input = torch.rand(1, 3, 32, 32)
             elif args.dataset=="Imagenet":
                 dummy_input = torch.rand(1, 3, 224, 224)
+            elif args.dataset=="mult_5T":
+                dummy_input = torch.rand(1, 3, 112, 112)
             # run inference
             with torch.no_grad():
-                model(dummy_input)
+                model(dummy_input,eval_mode=True)
             # store flops
             output_sizes = list()
             for param in model.parameters():

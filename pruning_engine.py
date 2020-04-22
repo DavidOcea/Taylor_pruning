@@ -518,12 +518,20 @@ class pytorch_pruning(object):
             if self.prune_per_iteration == 0:
                 continue
 
+            Buffer_unit = []
             for group in groups[layer]:
                 if group[1] <= threshold_now:
                     for unit in group[0]:
                         # do actual pruning
-                        self.pruning_gates[layer][unit] *= 0.0
-                        self.parameters[layer].data[unit] *= 0.0
+                        # count += 1
+                        Buffer_unit.append(unit)  
+                        if len(Buffer_unit) == 2:   #控制搜索出的网络结构倍数
+                            # print("layer:",layer,Buffer_unit)
+                            for item in Buffer_unit:
+                                self.pruning_gates[layer][item] *= 0.0
+                                self.parameters[layer].data[item] *= 0.0
+                            Buffer_unit = [] 
+
 
             write_to_debug("pruned_perc:", [np.nonzero(1.0-self.pruning_gates[layer])[0].size, len(self.parameters[layer])])
 
@@ -716,9 +724,10 @@ class pytorch_pruning(object):
                     if self.stored_weights[neurion_id].sum() == 0.0:
                         new_loss = initial_loss
                     else:
-                        outputs = model(data)
-                        loss = criterion(outputs, target)
-                        new_loss = loss.item()
+                        new_loss = initial_loss
+                        # outputs = model(data)
+                        # loss = criterion(outputs, target)
+                        # new_loss = loss.item()
 
                     # define loss
                     oracle_value = abs(initial_loss - new_loss)

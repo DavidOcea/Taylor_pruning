@@ -33,6 +33,13 @@ import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
 import numpy as np
+
+from datasets import GivenSizeSampler, BinDataset, FileListLabeledDataset, FileListDataset
+from transforms import RandomResizedCrop, Compose, Resize, CenterCrop, ToTensor, \
+    Normalize, RandomHorizontalFlip, ColorJitter, Lighting
+from torch.utils.data import DataLoader
+from torch.autograd import Variable
+
 #++++++++end
 
 # code is based on Pytorch example for imagenet
@@ -48,6 +55,37 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
+def lr_cosine(epoch, epochs, init_lr, optimizer):
+    cur_phase = epoch / epochs
+    cos = np.cos(cur_phase * np.pi)
+    cur_lr = 0.5 * (1 + cos) * init_lr
+    return cur_lr
+
+def lr_step(optimizer, epoch, args, cur_lr):
+    st_lr = cur_lr
+    if epoch in args.CLS.lr_schedule:
+        print('LR before = ', st_lr)
+        st_lr *= args.CLS.gamma
+#       param_group['lr'] = lr
+        print('LR after = ', st_lr)
+    return st_lr
+
+def adjust_learning_rate_test(optimizer, epoch, it,args):
+    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+    for param_group in optimizer.param_groups:
+        lr = param_group['lr']
+        if args.lr_scheduler == 'cosine':
+            if it == 0:
+                lr = lr_cosine(epoch, args.epochs, args.lr, optimizer)
+        elif args.lr_scheduler == 'step':
+            if it == 0:
+                lr = lr_step(optimizer, epoch, args, param_group['lr'])
+        param_group['lr'] = lr
+    return lr
+
+def load_module_state_dict_checkpoint(net, checkpoint_state):
+	net.load_state_dict(checkpoint_state,strict=False)
+	return net
 
 def train(args, model, device, train_loader, optimizer, epoch, criterion, train_writer=None, pruning_engine=None):
     """Train for one epoch on the training set also performs pruning"""
@@ -56,10 +94,14 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion, train_
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-    loss_tracker = 0.0
+    loss_tracker = 0.0  
     acc_tracker = 0.0
     loss_tracker_num = 0
     res_pruning = 0
+
+    num_tasks = len(train_loader)
+    losses = [AverageMeter() for k in range(num_tasks)]
+    
 
     model.train()
     if args.fixed_network:
@@ -67,43 +109,50 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion, train_
         model.eval()
 
     end = time.time()
-    for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.to(device), target.to(device)
+    args.lr_scheduler = 'cosine'
+    for batch_idx, all_in in enumerate(zip(*tuple(train_loader))):
+        lr = adjust_learning_rate_test(optimizer, epoch, batch_idx,args)   
+        input, target = zip(*[all_in[k] for k in range(num_tasks)])
+        slice_pt = 0
+        slice_idx = [0]
+        for l in [p.size(0) for p in input]:
+            slice_pt += l // args.ngpu
+            slice_idx.append(slice_pt)
+        organized_input = []
+        organized_target = []
+        for ng in range(args.ngpu):
+            for t in range(len(input)):
+                bs = args.train_batch_size[t] // args.ngpu
+                organized_input.append(input[t][ng * bs : (ng + 1) * bs, ...])
+                organized_target.append(target[t][ng * bs : (ng + 1) * bs, ...])
+        input = torch.cat(organized_input, dim=0)
+        target = torch.cat(organized_target, dim=0)
+        input_var = Variable(input.cuda(),requires_grad=False)
+        target_var = Variable(target.cuda(),requires_grad=False)
         # make sure that all gradients are zero
         for p in model.parameters():
             if p.grad is not None:
                 p.grad.detach_()
                 p.grad.zero_()
-
-        output = model(data)
-        loss = criterion(output, target)
-
+        loss = model(input_var, target_var, slice_idx)
+        for k in range(num_tasks):
+            loss_temp = loss[k].cpu().detach().numpy()
+            losses[k].update(loss_temp.mean())
+        loss_total = 0.
+        for k in range(num_tasks):
+            loss_total = loss_total + loss[k].mean() * args.loss_weight[k]
         if args.pruning:
             # useful for method 40 and 50 that calculate oracle
-            pruning_engine.run_full_oracle(model, data, target, criterion, initial_loss=loss.item())
-
-        # measure accuracy and record loss
-        losses.update(loss.item(), data.size(0))
-
-        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        top1.update(prec1.item(), data.size(0))
-        top5.update(prec5.item(), data.size(0))
-        acc_tracker += prec1.item()
-
-        loss_tracker += loss.item()
-
-        loss_tracker_num += 1
-
+            pruning_engine.run_full_oracle(model, input_var, target_var, criterion, initial_loss=loss_total)
+        
         if args.pruning:
             if pruning_engine.needs_hessian:
-                pruning_engine.compute_hessian(loss)
+                pruning_engine.compute_hessian(loss_total)
 
         if not (args.pruning and args.pruning_method == 50):
             group_wd_optimizer.step()
 
-
-        loss.backward()
-
+        loss_total.backward()
 
         # add gradient clipping
         if not args.no_grad_clip:
@@ -118,27 +167,28 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion, train_
                 group_wd_optimizer.step_after()
 
         optimizer.step()
-
         batch_time.update(time.time() - end)
         end = time.time()
 
-        global_iteration = global_iteration + 1
-
         if batch_idx % args.log_interval == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                      epoch, batch_idx, len(train_loader), batch_time=batch_time,
-                      loss=losses, top1=top1, top5=top5))
+            print('Progress: [{0}][{1}/{2}]\t'
+                  'Lr: {3:.2g}\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})'.format(
+                   epoch, batch_idx, len(train_loader[0]), 
+                   optimizer.param_groups[0]['lr'],
+                   batch_time=batch_time))
+            for k in range(num_tasks):
+                print('Task: #{0}\t'
+                      'LossWeight: {1:.2g}\t'
+                      'Loss_total: {loss_total:.4f} \t'
+                      'Loss {loss.val:.4f} ({loss.avg:.4f})'.format(
+                       k, args.loss_weight[k], loss_total=loss_total, loss=losses[k]))
 
-            if train_writer is not None:
-                train_writer.add_scalar('train_loss_ave', losses.avg, global_iteration)
+        global_iteration = global_iteration + 1
 
         if args.pruning:
             # pruning_engine.update_flops(stats=group_wd_optimizer.per_layer_per_neuron_stats)
-            pruning_engine.do_step(loss=loss.item(), optimizer=optimizer)
+            pruning_engine.do_step(loss=loss_total, optimizer=optimizer)
 
             if args.model == "resnet20" or args.model == "resnet101" or args.dataset == "Imagenet":
                 if (pruning_engine.maximum_pruning_iterations == pruning_engine.pruning_iterations_done) and pruning_engine.set_moment_zero:
@@ -151,23 +201,15 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion, train_
                                 del param_state['momentum_buffer']
 
                     pruning_engine.set_moment_zero = False
-
-        # if not (args.pruning and args.pruning_method == 50):
-        #     if batch_idx % args.log_interval == 0:
-        #         group_wd_optimizer.step_after()
-
+        
         if args.tensorboard and (batch_idx % args.log_interval == 0):
-
             neurons_left = int(group_wd_optimizer.get_number_neurons(print_output=args.get_flops))
             flops = int(group_wd_optimizer.get_number_flops(print_output=args.get_flops))
-
-            train_writer.add_scalar('neurons_optimizer_left', neurons_left, global_iteration)
-            train_writer.add_scalar('neurons_optimizer_flops_left', flops, global_iteration)
         else:
             if args.get_flops:
                 neurons_left = int(group_wd_optimizer.get_number_neurons(print_output=args.get_flops))
                 flops = int(group_wd_optimizer.get_number_flops(print_output=args.get_flops))
-
+        
         if args.limit_training_batches != -1:
             if args.limit_training_batches < batch_idx:
                 # return from training step, unsafe and was not tested correctly
@@ -181,50 +223,53 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion, train_
 
 def validate(args, test_loader, model, device, criterion, epoch, train_writer=None):
     """Perform validation on the validation set"""
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-
-    # switch to evaluate mode
+    num_tasks = len(test_loader)
+    losses = [AverageMeter() for k in range(num_tasks)]
+    task_result = {}
+    task_target = {}
+    for i in range(num_tasks):
+        task_result[i] = []
+        task_target[i] = []
+    #------
     model.eval()
-
-    end = time.time()
+    result = {}
     with torch.no_grad():
-        for data_test in test_loader:
-            data, target = data_test
+        for nums in range(len(test_loader)):
+            for i, (input, target) in enumerate(test_loader[nums]):
+                inputs = Variable(input.cuda(),requires_grad=False)
+                targets = Variable(target.cuda(),requires_grad=False)
 
-            data = data.to(device)
+                fc = model(inputs,eval_mode=True)
+                result[nums] = F.softmax(fc[nums])
+                for i in range(len(result[nums])):
+                    task_result[nums].append(result[nums][i].argmax().item())
+                    task_target[nums].append(targets[i])
 
-            output = model(data)
-
-            if args.get_inference_time:
-                iterations_get_inference_time = 100
-                start_get_inference_time = time.time()
-                for it in range(iterations_get_inference_time):
-                    output = model(data)
-                end_get_inference_time = time.time()
-                print("time taken for %d iterations, per-iteration is: "%(iterations_get_inference_time), (end_get_inference_time - start_get_inference_time)*1000.0/float(iterations_get_inference_time), "ms")
-
-            target = target.to(device)
-            loss = criterion(output, target)
-
-            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-            losses.update(loss.item(), data.size(0))
-            top1.update(prec1.item(), data.size(0))
-            top5.update(prec5.item(), data.size(0))
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-    print(' * Prec@1 {top1.avg:.3f}, Prec@5 {top5.avg:.3f}, Time {batch_time.sum:.5f}, Loss: {losses.avg:.3f}'.format(top1=top1, top5=top5,batch_time=batch_time, losses = losses) )
-    # log to TensorBoard
-    if train_writer is not None:
-        train_writer.add_scalar('val_loss', losses.avg, epoch)
-        train_writer.add_scalar('val_acc', top1.avg, epoch)
-
-    return top1.avg, losses.avg
+        #--结果输出--
+        task_acc = {}
+        acc_all = 0.
+        for n in range(num_tasks):
+            task_acc[n] = 0
+            for i in range(len(task_result[n])):
+                if task_result[n][i] == task_target[n][i]:
+                    task_acc[n] += 1
+            print("task_"+str(n)+"_acc@1 is {:.2f}".format(task_acc[n]/(len(task_result[n]))))
+            acc_all += task_acc[n]/len(task_result[n])
+            num_classesWM = args.val_num_classes[n]
+            acc = {}
+            pre = {}
+            for lab in range(len(num_classesWM)):
+                acc[lab] = 0.0
+                for i in range(len(task_result[n])):
+                    if task_result[n][i] == task_target[n][i] == lab:
+                        acc[lab] += 1
+                accs = task_result[n].count(lab)
+                if task_result[n].count(lab) == 0:
+                    accs = 1
+                pre[lab] = round(acc[lab]/accs,2)
+            print("task_"+str(n)+"label acc: {}".format(pre))
+        acc_ave = acc_all/num_tasks
+    return acc_ave
 
 
 
@@ -276,7 +321,7 @@ def main():
                         help='use data paralization via multiple GPUs')
 
     parser.add_argument('--dataset', default="MNIST", type=str,
-                        help='dataset for experiment, choice: MNIST, CIFAR10', choices= ["MNIST", "CIFAR10", "Imagenet"])
+                        help='dataset for experiment, choice: MNIST, CIFAR10')
 
     parser.add_argument('--data', metavar='DIR', default='/imagenet', help='path to imagenet dataset')
 
@@ -284,13 +329,16 @@ def main():
                         help='model selection, choices: lenet3, vgg, mobilenetv2, resnet18',
                         choices=["lenet3", "vgg", "mobilenetv2", "resnet18", "resnet152", "resnet50", "resnet50_noskip",
                                  "resnet20", "resnet34", "resnet101", "resnet101_noskip", "densenet201_imagenet",
-                                 'densenet121_imagenet'])
+                                 'densenet121_imagenet',"multprun_gate5_gpu_0316_1","purn_20200411_5T_2b","mult_prun_5T_normal"])
 
     parser.add_argument('--tensorboard', type=str2bool, nargs='?',
                         help='Log progress to TensorBoard')
 
     parser.add_argument('--save_models', default=True, type=str2bool, nargs='?',
                         help='if True, models will be saved to the local folder')
+
+    parser.add_argument('--fineturn_model', type=str2bool, nargs='?',
+                        help='Log progress to TensorBoard')
 
 
     # ============================PRUNING added
@@ -382,55 +430,6 @@ def main():
                                 world_size=args.world_size, rank=0)
 
     device = torch.device("cuda" if use_cuda else "cpu")
-
-    if args.model == "lenet3":
-        model = LeNet(dataset=args.dataset)
-    elif args.model == "vgg":
-        model = vgg11_bn(pretrained=True)
-    elif args.model == "resnet18":
-        model = PreActResNet18()
-    elif (args.model == "resnet50") or (args.model == "resnet50_noskip"):
-        if args.dataset == "CIFAR10":
-            model = PreActResNet50(dataset=args.dataset)
-        else:
-            from models.resnet import resnet50
-            skip_gate = True
-            if "noskip" in args.model:
-                skip_gate = False
-
-            if args.pruning_method not in [22, 40]:
-                skip_gate = False
-            model = resnet50(skip_gate=skip_gate)
-    elif args.model == "resnet34":
-        if not (args.dataset == "CIFAR10"):
-            from models.resnet import resnet34
-            model = resnet34()
-    elif "resnet101" in args.model:
-        if not (args.dataset == "CIFAR10"):
-            from models.resnet import resnet101
-            if args.dataset == "Imagenet":
-                classes = 1000
-
-            if "noskip" in args.model:
-                model = resnet101(num_classes=classes, skip_gate=False)
-            else:
-                model = resnet101(num_classes=classes)
-
-    elif args.model == "resnet20":
-        if args.dataset == "CIFAR10":
-            NotImplementedError("resnet20 is not implemented in the current project")
-            # from models.resnet_cifar import resnet20
-            # model = resnet20()
-    elif args.model == "resnet152":
-        model = PreActResNet152()
-    elif args.model == "densenet201_imagenet":
-        from models.densenet_imagenet import DenseNet201
-        model = DenseNet201(gate_types=['output_bn'], pretrained=True)
-    elif args.model == "densenet121_imagenet":
-        from models.densenet_imagenet import DenseNet121
-        model = DenseNet121(gate_types=['output_bn'], pretrained=True)
-    else:
-        print(args.model, "model is not supported")
 
     # dataset loading section
     if args.dataset == "MNIST":
@@ -528,6 +527,136 @@ def main():
                 normalize,
             ])),
             batch_size=args.batch_size, shuffle=False, pin_memory=True, **kwargs)
+    #wm
+    elif args.dataset == "mult_5T":
+        args.data_root = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0417/CX_20200417',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TK_20200417',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/ZR_20200417',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TX_20200417',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0224/WM_20200224']
+
+        args.train_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0417/CX_20200417/txt/cx_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TK_20200417/txt/tk_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/ZR_20200417/txt/zr_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TX_20200417/txt/tx_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0224/WM_20200224/txt/wm_train.txt']
+
+        args.val_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0417/CX_20200417/txt/cx_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TK_20200417/txt/tk_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/ZR_20200417/txt/zr_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TX_20200417/txt/tx_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0224/WM_20200224/txt/wm_val.txt']
+
+        num_tasks = len(args.data_root)
+        args.ngpu = 8
+        args.workers = 8
+        args.train_batch_size = [64,64,64,64,64] #36
+        args.val_batch_size = [100,100,100,100,100]
+        args.loss_weight = [1.0, 1.0, 1.0, 1.0, 1.0]
+        args.val_num_classes = [[0,1,2,3,4], [0,1,2], [0,1], [0,1], [0,1,2,3,4,5,6]]
+
+        for i in range(num_tasks):
+          args.train_batch_size[i] *= 8
+          args.val_batch_size[i] *= 8
+        
+
+        pixel_mean= [0.406, 0.456, 0.485]
+        pixel_std= [0.225, 0.224, 0.229]
+
+        train_dataset = train_dataset = [FileListLabeledDataset(
+        args.train_data_list[i], args.data_root[i],
+        Compose([
+            RandomResizedCrop(112,scale=(0.7, 1.2), ratio=(1. / 1., 4. / 1.)),
+            RandomHorizontalFlip(),
+            ColorJitter(brightness=[0.5,1.5], contrast=[0.5,1.5], saturation=[0.5,1.5], hue= 0),
+            ToTensor(),
+            Lighting(1, [0.2175, 0.0188, 0.0045], [[-0.5675,  0.7192,  0.4009], [-0.5808, -0.0045, -0.8140], [-0.5836, -0.6948,  0.4203]]),
+            Normalize(pixel_mean, pixel_std),]),
+        memcached=False,
+        memcached_client="") for i in range(num_tasks)]
+        args.num_classes = [td.num_class for td in train_dataset]
+        train_longest_size = max([int(np.ceil(len(td) / float(bs))) for td, bs in zip(train_dataset, args.train_batch_size)])
+        train_sampler = [GivenSizeSampler(td, total_size=train_longest_size * bs, rand_seed=0) for td, bs in zip(train_dataset, args.train_batch_size)]
+        train_loader = [DataLoader(
+        train_dataset[k], batch_size=args.train_batch_size[k], shuffle=False,
+        num_workers=args.workers, pin_memory=False, sampler=train_sampler[k]) for k in range(num_tasks)]
+
+        val_dataset = [FileListLabeledDataset(
+            args.val_data_list[i], args.data_root[i],
+            Compose([
+                Resize((128,128)),
+                CenterCrop(112),
+                ToTensor(),
+                Normalize(pixel_mean, pixel_std),]),
+            memcached=False,
+            memcached_client="") for i in range(num_tasks)] 
+        val_longest_size = max([int(np.ceil(len(vd) / float(bs))) for vd, bs in zip(val_dataset, args.val_batch_size)])
+        test_loader = [DataLoader(
+            val_dataset[k], batch_size=args.val_batch_size[k], shuffle=False,
+            num_workers=args.workers, pin_memory=False ) for k in range(num_tasks)]
+
+    if args.model == "lenet3":
+        model = LeNet(dataset=args.dataset)
+    elif args.model == "vgg":
+        model = vgg11_bn(pretrained=True)
+    elif args.model == "resnet18":
+        model = PreActResNet18()
+    elif (args.model == "resnet50") or (args.model == "resnet50_noskip"):
+        if args.dataset == "CIFAR10":
+            model = PreActResNet50(dataset=args.dataset)
+        else:
+            from models.resnet import resnet50
+            skip_gate = True
+            if "noskip" in args.model:
+                skip_gate = False
+
+            if args.pruning_method not in [22, 40]:
+                skip_gate = False
+            model = resnet50(skip_gate=skip_gate)
+    elif args.model == "resnet34":
+        if not (args.dataset == "CIFAR10"):
+            from models.resnet import resnet34
+            model = resnet34()
+    elif args.model == "multprun_gate5_gpu_0316_1":
+        from models.multitask import MultiTaskWithLoss
+        model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=2560, spatial_size=112, arc_fc=False, feat_bn=False)
+        print(model)
+    elif args.model == "purn_20200411_5T_2b":
+        from models.multitask import MultiTaskWithLoss
+        model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=18, spatial_size=112, arc_fc=False, feat_bn=False)
+        print(model)
+    elif args.model == "mult_prun_5T_normal":
+        from models.multitask import MultiTaskWithLoss
+        model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=1280, spatial_size=112, arc_fc=False, feat_bn=False)
+        print(model)
+    elif "resnet101" in args.model:
+        if not (args.dataset == "CIFAR10"):
+            from models.resnet import resnet101
+            if args.dataset == "Imagenet":
+                classes = 1000
+
+            if "noskip" in args.model:
+                model = resnet101(num_classes=classes, skip_gate=False)
+            else:
+                model = resnet101(num_classes=classes)
+
+    elif args.model == "resnet20":
+        if args.dataset == "CIFAR10":
+            NotImplementedError("resnet20 is not implemented in the current project")
+            # from models.resnet_cifar import resnet20
+            # model = resnet20()
+    elif args.model == "resnet152":
+        model = PreActResNet152()
+    elif args.model == "densenet201_imagenet":
+        from models.densenet_imagenet import DenseNet201
+        model = DenseNet201(gate_types=['output_bn'], pretrained=True)
+    elif args.model == "densenet121_imagenet":
+        from models.densenet_imagenet import DenseNet121
+        model = DenseNet121(gate_types=['output_bn'], pretrained=True)
+    else:
+        print(args.model, "model is not supported")
+
+
 
     ####end dataset preparation
 
@@ -678,7 +807,12 @@ def main():
     # loading model file
     if (len(args.load_model) > 0) and (not args.dynamic_network):
         if os.path.isfile(args.load_model):
-            load_model_pytorch(model, args.load_model, args.model)
+            if args.fineturn_model:
+                checkpoint = torch.load(args.load_model)
+                state_dict = checkpoint['state_dict']
+                model = load_module_state_dict_checkpoint(model, state_dict)
+            else:
+                load_model_pytorch(model, args.load_model, args.model)
         else:
             print("=> no checkpoint found at '{}'".format(args.load_model))
             exit()
@@ -704,12 +838,13 @@ def main():
             if pruning_engine.method == 50: continue
 
         # evaluate on validation set
-        prec1, _ = validate(args, test_loader, model, device, criterion, epoch, train_writer=train_writer)
+        prec1 = validate(args, test_loader, model, device, criterion, epoch, train_writer=train_writer)
 
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
         model_save_path = "%s/models/checkpoint.weights"%(log_save_folder)
+        paths =  "%s/models"%(log_save_folder)
         model_state_dict = model.state_dict()
         if args.save_models:
             save_checkpoint({
@@ -717,6 +852,11 @@ def main():
                 'state_dict': model_state_dict,
                 'best_prec1': best_prec1,
             }, is_best, filename=model_save_path)
+            states = {
+                'epoch': epoch + 1,
+                'state_dict': model_state_dict,
+            }
+            torch.save(states, '{}/{}.pth.tar'.format(paths, epoch + 1))
 
 
 if __name__ == '__main__':
