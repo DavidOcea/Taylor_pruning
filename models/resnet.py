@@ -7,6 +7,8 @@ Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses
 
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
+import sys
+sys.path.append("../")
 from layers.gate_layer import GateLayer
 
 
@@ -259,3 +261,7 @@ def resnet152(pretrained=False, **kwargs):
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
     return model
+
+if __name__ == '__main__':
+    model = resnet50(num_classes = 10, skip_gate = False)
+    print(model)

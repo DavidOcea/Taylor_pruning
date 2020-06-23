@@ -87,6 +87,23 @@ def load_module_state_dict_checkpoint(net, checkpoint_state):
 	net.load_state_dict(checkpoint_state,strict=False)
 	return net
 
+def mixup_data(x,y,alpha=1.0,use_cuda=True):
+        if alpha > 0:
+                lam = np.random.beta(alpha,alpha)
+        else:
+                lam = 1
+        batch_size = x.size()[0]
+        if use_cuda:
+                index = torch.randperm(batch_size).cuda()
+        else:
+                index = torch.randperm(batch_size)
+        mixed_x = lam*x+(1-lam)*x[index,:]
+        y_a,y_b = y,y[index]
+        return mixed_x,y_a,y_b,lam
+
+def mixup_criterion(criterion,pred,y_a,y_b,lam):
+    return lam*criterion(pred,y_a)+(1-lam)*criterion(pred,y_b)
+
 def train(args, model, device, train_loader, optimizer, epoch, criterion, train_writer=None, pruning_engine=None):
     """Train for one epoch on the training set also performs pruning"""
     global global_iteration
@@ -129,12 +146,17 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion, train_
         target = torch.cat(organized_target, dim=0)
         input_var = Variable(input.cuda(),requires_grad=False)
         target_var = Variable(target.cuda(),requires_grad=False)
+
         # make sure that all gradients are zero
         for p in model.parameters():
             if p.grad is not None:
                 p.grad.detach_()
                 p.grad.zero_()
-        loss = model(input_var, target_var, slice_idx)
+
+        if args.mixup_alpha is not None:
+            loss = model(input_var, target_var, slice_idx, mixup_criterion=mixup_criterion, mixup_data=mixup_data, mix_alpha=args.mixup_alpha)
+        else:
+            loss = model(input_var, target_var, slice_idx)
         for k in range(num_tasks):
             loss_temp = loss[k].cpu().detach().numpy()
             losses[k].update(loss_temp.mean())
@@ -253,7 +275,7 @@ def validate(args, test_loader, model, device, criterion, epoch, train_writer=No
             for i in range(len(task_result[n])):
                 if task_result[n][i] == task_target[n][i]:
                     task_acc[n] += 1
-            print("task_"+str(n)+"_acc@1 is {:.2f}".format(task_acc[n]/(len(task_result[n]))))
+            print("task_"+str(n)+"_acc@1 is {:.4f}".format(task_acc[n]/(len(task_result[n]))))
             acc_all += task_acc[n]/len(task_result[n])
             num_classesWM = args.val_num_classes[n]
             acc = {}
@@ -266,7 +288,7 @@ def validate(args, test_loader, model, device, criterion, epoch, train_writer=No
                 accs = task_result[n].count(lab)
                 if task_result[n].count(lab) == 0:
                     accs = 1
-                pre[lab] = round(acc[lab]/accs,2)
+                pre[lab] = round(acc[lab]/accs,4)
             print("task_"+str(n)+"label acc: {}".format(pre))
         acc_ave = acc_all/num_tasks
     return acc_ave
@@ -529,35 +551,42 @@ def main():
             batch_size=args.batch_size, shuffle=False, pin_memory=True, **kwargs)
     #wm
     elif args.dataset == "mult_5T":
-        args.data_root = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0417/CX_20200417',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TK_20200417',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/ZR_20200417',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TX_20200417',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0224/WM_20200224']
+        args.data_root = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200515']
 
-        args.train_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0417/CX_20200417/txt/cx_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TK_20200417/txt/tk_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/ZR_20200417/txt/zr_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TX_20200417/txt/tx_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0224/WM_20200224/txt/wm_train.txt']
+        args.data_root_val = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200511']
 
-        args.val_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0417/CX_20200417/txt/cx_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TK_20200417/txt/tk_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/ZR_20200417/txt/zr_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0417/TX_20200417/txt/tx_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0224/WM_20200224/txt/wm_val.txt']
+        args.train_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511/txt/cx_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511/txt/tk_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511/txt/zr_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511/txt/tx_train.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200515/txt/wm_train.txt']
+
+        args.val_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511/txt/cx_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511/txt/tk_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511/txt/zr_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511/txt/tx_val.txt',\
+        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200511/txt/wm_val.txt']
 
         num_tasks = len(args.data_root)
         args.ngpu = 8
         args.workers = 8
-        args.train_batch_size = [64,64,64,64,64] #36
+        args.train_batch_size = [80,80,80,80,80] #36
         args.val_batch_size = [100,100,100,100,100]
         args.loss_weight = [1.0, 1.0, 1.0, 1.0, 1.0]
         args.val_num_classes = [[0,1,2,3,4], [0,1,2], [0,1], [0,1], [0,1,2,3,4,5,6]]
+        args.mixup_alpha = None #None
 
         for i in range(num_tasks):
-          args.train_batch_size[i] *= 8
-          args.val_batch_size[i] *= 8
+          args.train_batch_size[i] *= args.ngpu
+          args.val_batch_size[i] *= args.ngpu
         
 
         pixel_mean= [0.406, 0.456, 0.485]
@@ -582,10 +611,10 @@ def main():
         num_workers=args.workers, pin_memory=False, sampler=train_sampler[k]) for k in range(num_tasks)]
 
         val_dataset = [FileListLabeledDataset(
-            args.val_data_list[i], args.data_root[i],
+            args.val_data_list[i], args.data_root_val[i],
             Compose([
-                Resize((128,128)),
-                CenterCrop(112),
+                Resize((112,112)),
+                # CenterCrop(112),
                 ToTensor(),
                 Normalize(pixel_mean, pixel_std),]),
             memcached=False,
