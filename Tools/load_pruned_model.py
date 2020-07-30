@@ -8,9 +8,9 @@ def make_model(weight_path,in_config,all_gatelayer_info,model_save):
  
     f = open(in_config,'r')
     load_dic = json.load(f)
-    block_s = load_dic['block']
+    block_s = load_dic['blocks']
     feature_max = load_dic['feature_mix_layer']
-    idx_list = [1,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]
+    idx_list = [1,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]  #有效层
     
     checkpoint = torch.load(weight_path, map_location='cpu') #map_location='cpu',默认不写gpu
     state_dict = checkpoint['state_dict']
@@ -39,17 +39,21 @@ def make_model(weight_path,in_config,all_gatelayer_info,model_save):
                 block_s[idx]['mobile_inverted_conv']['depth_out'] = int(reminded[idx])
 
                 block_s[idx]['mobile_inverted_conv']['flag_channels'] = True
-        if 'feature_mix_layer' in v[0]:
-            reminded['out_channels'] = state_dict['module.basemodel.feature_mix_layer.gate.weight'].sum().item()
-            feature_max['out_channels'] = int(reminded['out_channels'])
+        #如果feature_mix_layer 减的话
+        # if 'feature_mix_layer' in v[0]:
+        #     reminded['out_channels'] = state_dict['module.basemodel.feature_mix_layer.gate.weight'].sum().item()
+        #     feature_max['out_channels'] = int(reminded['out_channels'])
     
     
     lines = json.dumps(load_dic,ensure_ascii=False, indent=1)  #indent,换行存
     f.close()
     re_save_moel_weitht(weight_path,all_gatelayer_info,reminded,inverted_out,needs_add,idx_list,model_save)
     return lines
-               #2     #4                                                                                   
-gate_dic = {0:[0],1:[1],3:[3],5:[5],6:[7],7:[9],8:[11],9:[13],10:[15],11:[17],12:[19],13:[21],14:[23],15:[25],16:[27],17:[29],18:[31],19:[33],20:[35],21:[37]}
+
+# 所减的最小层 一句gate层的分配而定              #2     #4                                                                                   
+# gate_dic = {0:[0],1:[1],3:[3],5:[5],6:[7],7:[9],8:[11],9:[13],10:[15],11:[17],12:[19],13:[21],14:[23],15:[25],16:[27],17:[29],18:[31],19:[33],20:[35],21:[37]}
+gate_dic = {0:[0],1:[1],3:[3],5:[5],6:[7],7:[9],8:[11],9:[13],10:[13],11:[15],12:[17],13:[19],14:[19],15:[21],16:[23],17:[25],18:[27],19:[29],20:[31],21:[33]}
+# gate_dic = {0:[0],1:[1],2:[3],3:[5],4:[7],5:[9],6:[11],7:[13],8:[15],9:[17],10:[19],11:[21],12:[23],13:[25],14:[27],15:[29],16:[31],17:[33],21:[35]}
   
 def re_save_moel_weitht(weight_path,all_gatelayer_info,reminded,inverted_out,needs_add_re,idx_list,model_save):
     checkpoint = torch.load(weight_path, map_location='cpu') #map_location='cpu',默认不写gpu
@@ -61,7 +65,7 @@ def re_save_moel_weitht(weight_path,all_gatelayer_info,reminded,inverted_out,nee
     reminded_cunt = 0
     tem_ids = 0
     #如果整除通道对不上需要手动修改
-    needs_add_re[21] = 453.0
+    # needs_add_re[21] = 453.0
     #如果修改feature_mix:同时修改最后fc
     num_task = 5
     # import pdb
@@ -75,6 +79,12 @@ def re_save_moel_weitht(weight_path,all_gatelayer_info,reminded,inverted_out,nee
         if 'blocks' in k:
             my_str = k[22:29]
             ids = int("".join(list(filter(str.isdigit,  my_str ))))
+
+            #第ids层不减
+            if ids == 9 or ids == 13 or ids == 0:
+                new_state_dict[k] = vs
+                print(k,':',vs.shape)
+                continue
 
             if ids == 0:
                 gate_count = 0
@@ -105,27 +115,27 @@ def re_save_moel_weitht(weight_path,all_gatelayer_info,reminded,inverted_out,nee
                     reminded_cunt = 0
                     reminded_flag = 0
         #feature_mix_layer层如果减的话：需要调试
-        elif 'feature_mix_layer' in k:
-            if 'bn.weight' in k or 'bn.bias' in k or 'bn.running_mean' in k or 'bn.running_var' in k:
-                put = 'mid'
-                pruned_weights = get_pruned_weights(all_gatelayer_info,0,vs,{0:0},{0:0},{0:0},put,39,0,False,all_gatelayer_info_tem)
-                print('After pruned layer:({}) size is :{}'.format(k,pruned_weights.size()))
-                new_state_dict[k] = pruned_weights
-            if 'conv.weight' in k:
-                put = 'out'
-                pruned_weights = get_pruned_weights(all_gatelayer_info,0,vs,{0:0},{0:0},{0:0},put,39,0,False,all_gatelayer_info_tem)
-                print('After pruned layer:({}) size is :{}'.format(k,pruned_weights.size()))
-                new_state_dict[k] = pruned_weights
-        elif 'fcs' in k:
-            for i_cls in range(num_task):
-                if str(i_cls)+'.weight' in k:
-                    put = 'fcs'
-                    pruned_weights = get_pruned_weights(all_gatelayer_info,0,vs,{0:0},{0:0},{0:0},put,39,0,False,all_gatelayer_info_tem)
-                    print('After pruned layer:({}) size is :{}'.format(k,pruned_weights.size()))
-                    new_state_dict[k] = pruned_weights
-                elif str(i_cls)+'.bias' in k:
-                    new_state_dict[k] = vs
-                    print(k,':',vs.shape)
+        # elif 'feature_mix_layer' in k:
+        #     if 'bn.weight' in k or 'bn.bias' in k or 'bn.running_mean' in k or 'bn.running_var' in k:
+        #         put = 'mid'
+        #         pruned_weights = get_pruned_weights(all_gatelayer_info,0,vs,{0:0},{0:0},{0:0},put,39,0,False,all_gatelayer_info_tem)
+        #         print('After pruned layer:({}) size is :{}'.format(k,pruned_weights.size()))
+        #         new_state_dict[k] = pruned_weights
+        #     if 'conv.weight' in k:
+        #         put = 'out'
+        #         pruned_weights = get_pruned_weights(all_gatelayer_info,0,vs,{0:0},{0:0},{0:0},put,39,0,False,all_gatelayer_info_tem)
+        #         print('After pruned layer:({}) size is :{}'.format(k,pruned_weights.size()))
+        #         new_state_dict[k] = pruned_weights
+        # elif 'fcs' in k:
+        #     for i_cls in range(num_task):
+        #         if str(i_cls)+'.weight' in k:
+        #             put = 'fcs'
+        #             pruned_weights = get_pruned_weights(all_gatelayer_info,0,vs,{0:0},{0:0},{0:0},put,39,0,False,all_gatelayer_info_tem)
+        #             print('After pruned layer:({}) size is :{}'.format(k,pruned_weights.size()))
+        #             new_state_dict[k] = pruned_weights
+        #         elif str(i_cls)+'.bias' in k:
+        #             new_state_dict[k] = vs
+        #             print(k,':',vs.shape)
 
         else:
             new_state_dict[k] = vs
@@ -263,10 +273,10 @@ def read_pruned_weights(weight_path):
     state_dict = checkpoint['state_dict']
     
     # #输出gate结构
-    # for k, v in state_dict.items():
-    #     if 'gate' in k:
-    #         print(k,':',v.sum())
-    #     print(k,":",v.shape)
+    for k, v in state_dict.items():
+        if 'gate' in k:
+            print(k,':',v.sum())
+        print(k,":",v.shape)
     # return
     
     all_gatelayer_info = []
@@ -280,7 +290,7 @@ def read_pruned_weights(weight_path):
     return all_gatelayer_info
 
 def main():
-    weight_path = '../runs/mult_5T/mult_5T_prune72_0411_t/models/checkpoint.weights'
+    weight_path = '../runs/mult_5T/mult_prun8_gpu/models/21.pth.tar'
     
     #sava model_weight
     all_gatelayer_info = read_pruned_weights(weight_path)
@@ -288,8 +298,8 @@ def main():
     
     #save model_config
     in_config = './net_config.json'
-    out_config = './configs/purned_config_411_2t.json'
-    model_save = './models/purn_20200411_5T_2t.pth.tar'
+    out_config = './configs/purned_config_717_t2_tem.json'
+    model_save = './models/purn_20200717_5T_t_20e.pth.tar'
     with open(out_config, 'w') as f:
         f.writelines(make_model(weight_path,in_config,all_gatelayer_info,model_save))
     

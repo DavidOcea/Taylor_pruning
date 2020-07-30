@@ -3,6 +3,26 @@
 
 
 
+20200717: multnas5_gpu 第一次剪枝，100次，每次64
+pruning:nohup python -u main.py --name=runs/mult_5T/multnas5_gpu --dataset=mult_5T \
+--lr=0.001 --lr-decay-every=10 --momentum=0.9 --epochs=20  --pruning=True --seed=0 --model=multnas5_gpu \
+--load_model=./models/pretrained/0710ckpt_epoch_38.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
+--tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True \
+--pruning_config=./configs/mult_5T_prune72_404.json >./logs/20200717_mult5T_pruning_t2.log 2>&1 &
+20200717: mult_prun8_gpu 第一次剪枝，100次，每次64  注意：这个减的时候，backbone写的疏忽：9和第13个block没减
+pruning:nohup python -u main.py --name=runs/mult_5T/mult_prun8_gpu --dataset=mult_5T \
+--lr=0.001 --lr-decay-every=10 --momentum=0.9 --epochs=20  --pruning=True --seed=0 --model=mult_prun8_gpu \
+--load_model=./models/pretrained/0713ckpt_epoch_47.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
+--tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True \
+--pruning_config=./configs/mult_5T_prune72_404.json >./logs/20200717_mult5T_pruning_t.log 2>&1 &
+20200716: multnas5_gpu 第一次剪枝，200次，每次64
+pruning:nohup python -u main.py --name=runs/mult_5T/multnas5_gpu --dataset=mult_5T \
+--lr=0.001 --lr-decay-every=10 --momentum=0.9 --epochs=20  --pruning=True --seed=0 --model=multnas5_gpu \
+--load_model=./models/pretrained/0710ckpt_epoch_38.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
+--tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True \
+--pruning_config=./configs/mult_5T_prune72_404.json >./logs/20200715_mult5T_pruning_t.log 2>&1 &
+
+
 20200516 pruning,1），log：0516，用第一次的: 
 nohup python -u main.py --name=runs/mult_5T/mult_5T_prune72_0516 --dataset=mult_5T \
 --lr=0.01 --lr-decay-every=10 --momentum=0.9 --epochs=60  --pruning=False --seed=0 --model=purn_20200411_5T_2b \
@@ -51,6 +71,7 @@ nohup python -u main.py --name=runs/mult_5T/mult_5T_prune72_0515_2 --dataset=mul
 --load_model=./Tools/models/purn_20200411_5T_2b.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
 --tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True \
 --pruning_config=./configs/mult_5T_prune72_406.json >./logs/20200412_mult5T_pruning.log 2>&1 &
+减：
 20200411 pruning:nohup python -u main.py --name=runs/mult_5T/mult_5T_prune72_0411_t --dataset=mult_5T \
 --lr=0.001 --lr-decay-every=10 --momentum=0.9 --epochs=20  --pruning=True --seed=0 --model=multprun_gate5_gpu_0316_1 \
 --load_model=./models/pretrained/nma_20200319_5T.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
@@ -104,8 +125,14 @@ nohup python -u main.py --name=runs/mult_5T/mult_5T_prune72_0515_2 --dataset=mul
 
 
 
-python main.py --name=runs/mult_5T/mult_5T_prune72_0503 --dataset=mult_5T \
---lr=0.01 --lr-decay-every=10 --momentum=0.9 --epochs=60  --pruning=True --seed=0 --model=purn_20200411_5T_2b \
---load_model=./Tools/models/purn_20200411_5T_2b.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
---tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True --fineturn_model=True \
---pruning_config=./configs/mult_5T_prune72_406.json
+python main.py --name=runs/mult_5T/mult_prun8_gpu --dataset=mult_5T \
+--lr=0.001 --lr-decay-every=10 --momentum=0.9 --epochs=1  --pruning=True --seed=0 --model=mult_prun8_gpu \
+--load_model=./models/pretrained/0713ckpt_epoch_47.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
+--tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True \
+--pruning_config=./configs/mult_5T_prune72_404.json
+
+python main.py --name=runs/mult_5T/multnas5_gpu --dataset=mult_5T \
+--lr=0.001 --lr-decay-every=10 --momentum=0.9 --epochs=1  --pruning=True --seed=0 --model=multnas5_gpu \
+--load_model=./models/pretrained/0710ckpt_epoch_38.pth.tar --mgpu=True --group_wd_coeff=1e-8 --wd=0.0 \
+--tensorboard=True --pruning-method=22 --data='' --no_grad_clip=True \
+--pruning_config=./configs/mult_5T_prune72_404.json

@@ -11,6 +11,7 @@ import torch.distributed as dist
 import numpy as np
 import random
 import math
+from .label_smoothing import LSR
 
 def where(cond, x_1, x_2):
     cond = cond.float()
@@ -67,7 +68,8 @@ class MultiTaskWithLoss(nn.Module):
         self.basemodel = backbones.__dict__[backbone](num_classes=num_classes)
         if feat_bn:
             self.bn1d = nn.BatchNorm1d(feature_dim, affine=False, eps=2e-5, momentum=0.9)
-        self.criterion = nn.CrossEntropyLoss()
+        # self.criterion = nn.CrossEntropyLoss()
+        self.criterion = LSR()
         if num_classes is not None:
             self.num_tasks = len(num_classes)
             self.arc_fc = arc_fc

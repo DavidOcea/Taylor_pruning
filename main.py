@@ -351,7 +351,7 @@ def main():
                         help='model selection, choices: lenet3, vgg, mobilenetv2, resnet18',
                         choices=["lenet3", "vgg", "mobilenetv2", "resnet18", "resnet152", "resnet50", "resnet50_noskip",
                                  "resnet20", "resnet34", "resnet101", "resnet101_noskip", "densenet201_imagenet",
-                                 'densenet121_imagenet',"multprun_gate5_gpu_0316_1","purn_20200411_5T_2b","mult_prun_5T_normal"])
+                                 'densenet121_imagenet',"multprun_gate5_gpu_0316_1","mult_prun8_gpu","multnas5_gpu"])
 
     parser.add_argument('--tensorboard', type=str2bool, nargs='?',
                         help='Log progress to TensorBoard')
@@ -551,34 +551,34 @@ def main():
             batch_size=args.batch_size, shuffle=False, pin_memory=True, **kwargs)
     #wm
     elif args.dataset == "mult_5T":
-        args.data_root = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200515']
+        args.data_root = ['/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/CX_20200709',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TK_20200709',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/ZR_20200709',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TX_20200616',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/WM_20200709']
 
-        args.data_root_val = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200511']
+        args.data_root_val = ['/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/CX_20200709',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TK_20200709',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/ZR_20200709',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TX_20200616',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/WM_20200709']
 
-        args.train_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511/txt/cx_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511/txt/tk_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511/txt/zr_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511/txt/tx_train.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200515/txt/wm_train.txt']
+        args.train_data_list = ['/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/CX_20200709/txt/cx_train.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TK_20200709/txt/tk_train.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/ZR_20200709/txt/zr_train.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TX_20200616/txt/tx_train.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/WM_20200709/txt/wm_train.txt']
 
-        args.val_data_list = ['/home/testuser/data2/yangdecheng/data/TR-NMA-0511/CX_20200511/txt/cx_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TK_20200511/txt/tk_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/ZR_20200511/txt/zr_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/TX_20200511/txt/tx_val.txt',\
-        '/home/testuser/data2/yangdecheng/data/TR-NMA-0511/WM_20200511/txt/wm_val.txt']
+        args.val_data_list = ['/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/CX_20200709/txt/cx_val.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TK_20200709/txt/tk_val.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/ZR_20200709/txt/zr_val.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/TX_20200616/txt/tx_val.txt',\
+        '/workspace/mnt/storage/yangdecheng/yangdecheng/data/TR-NMA-07/WM_20200709/txt/wm_val.txt']
 
         num_tasks = len(args.data_root)
         args.ngpu = 8
         args.workers = 8
-        args.train_batch_size = [80,80,80,80,80] #36
+        args.train_batch_size = [40,40,40,40,40] #36
         args.val_batch_size = [100,100,100,100,100]
         args.loss_weight = [1.0, 1.0, 1.0, 1.0, 1.0]
         args.val_num_classes = [[0,1,2,3,4], [0,1,2], [0,1], [0,1], [0,1,2,3,4,5,6]]
@@ -591,18 +591,43 @@ def main():
 
         pixel_mean= [0.406, 0.456, 0.485]
         pixel_std= [0.225, 0.224, 0.229]
-
-        train_dataset = train_dataset = [FileListLabeledDataset(
-        args.train_data_list[i], args.data_root[i],
-        Compose([
+        
+        #私人定制：
+        train_dataset = []
+        for i in range(num_tasks): 
+            if i == 1:
+                train_dataset.append(FileListLabeledDataset(
+            args.train_data_list[i], args.data_root[i],
+            Compose([
+            RandomResizedCrop(112,scale=(0.94, 1.), ratio=(1. / 4., 4. / 1.)), #scale=(0.7, 1.2), ratio=(1. / 1., 4. / 1.)
+            RandomHorizontalFlip(),
+            ColorJitter(brightness=[0.5,1.5], contrast=[0.5,1.5], saturation=[0.5,1.5], hue= 0),
+            ToTensor(),
+            Lighting(1, [0.2175, 0.0188, 0.0045], [[-0.5675,  0.7192,  0.4009], [-0.5808, -0.0045, -0.8140], [-0.5836, -0.6948,  0.4203]]),
+            Normalize(pixel_mean, pixel_std),])))
+            else:
+                train_dataset.append(FileListLabeledDataset(
+            args.train_data_list[i], args.data_root[i],
+            Compose([
             RandomResizedCrop(112,scale=(0.7, 1.2), ratio=(1. / 1., 4. / 1.)),
             RandomHorizontalFlip(),
             ColorJitter(brightness=[0.5,1.5], contrast=[0.5,1.5], saturation=[0.5,1.5], hue= 0),
             ToTensor(),
             Lighting(1, [0.2175, 0.0188, 0.0045], [[-0.5675,  0.7192,  0.4009], [-0.5808, -0.0045, -0.8140], [-0.5836, -0.6948,  0.4203]]),
-            Normalize(pixel_mean, pixel_std),]),
-        memcached=False,
-        memcached_client="") for i in range(num_tasks)]
+            Normalize(pixel_mean, pixel_std),])))
+        #原来的
+        # train_dataset  = [FileListLabeledDataset(
+        # args.train_data_list[i], args.data_root[i],
+        # Compose([
+        #     RandomResizedCrop(112,scale=(0.7, 1.2), ratio=(1. / 1., 4. / 1.)),
+        #     RandomHorizontalFlip(),
+        #     ColorJitter(brightness=[0.5,1.5], contrast=[0.5,1.5], saturation=[0.5,1.5], hue= 0),
+        #     ToTensor(),
+        #     Lighting(1, [0.2175, 0.0188, 0.0045], [[-0.5675,  0.7192,  0.4009], [-0.5808, -0.0045, -0.8140], [-0.5836, -0.6948,  0.4203]]),
+        #     Normalize(pixel_mean, pixel_std),]),
+        # memcached=False,
+        # memcached_client="") for i in range(num_tasks)]
+
         args.num_classes = [td.num_class for td in train_dataset]
         train_longest_size = max([int(np.ceil(len(td) / float(bs))) for td, bs in zip(train_dataset, args.train_batch_size)])
         train_sampler = [GivenSizeSampler(td, total_size=train_longest_size * bs, rand_seed=0) for td, bs in zip(train_dataset, args.train_batch_size)]
@@ -650,13 +675,13 @@ def main():
         from models.multitask import MultiTaskWithLoss
         model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=2560, spatial_size=112, arc_fc=False, feat_bn=False)
         print(model)
-    elif args.model == "purn_20200411_5T_2b":
+    elif args.model == "mult_prun8_gpu":
         from models.multitask import MultiTaskWithLoss
         model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=18, spatial_size=112, arc_fc=False, feat_bn=False)
         print(model)
-    elif args.model == "mult_prun_5T_normal":
+    elif args.model == "multnas5_gpu": #作为修改项
         from models.multitask import MultiTaskWithLoss
-        model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=1280, spatial_size=112, arc_fc=False, feat_bn=False)
+        model = MultiTaskWithLoss(backbone=args.model, num_classes=args.num_classes, feature_dim=512, spatial_size=112, arc_fc=False, feat_bn=False)
         print(model)
     elif "resnet101" in args.model:
         if not (args.dataset == "CIFAR10"):

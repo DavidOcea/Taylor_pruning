@@ -131,7 +131,7 @@ def load_model_pytorch(model, load_model, model_name):
         if load_from[key].shape != item.shape:
             load_from[key] = item
 
-    model.load_state_dict(load_from, strict=True)
+    model.load_state_dict(load_from, strict=False)
 
 
     epoch_from = -1
